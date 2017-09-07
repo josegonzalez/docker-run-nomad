@@ -1,0 +1,151 @@
+#!/usr/bin/env python
+from __future__ import print_function
+import argparse
+import pprint
+
+
+def process_key_value_dict(kv):
+    if kv is None:
+        kv = []
+    kv = filter(None, kv)
+    _kv = {}
+    for k in kv:
+        if '=' in k:
+            _kv[k.split('=', 1)[0]] = k.split('=', 1)[1]
+        else:
+            _kv[k] = True
+
+    return _kv
+
+
+def process_restart_policy(restart_policy):
+    attempts = 0
+    if restart_policy is not None and restart_policy.startswith('on-failure:'):
+        attempts = restart_policy.split(':', 1)[1]
+    return {
+        'attempts': attempts,
+    }
+    pass
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description='docker wrapper for nomad')
+    parser.add_argument('-c',
+                        '--cpu-shares',
+                        dest='cpu_shares',
+                        help='CPU shares (relative weight)')
+    parser.add_argument('-e',
+                        '--env',
+                        action='append',
+                        dest='env',
+                        help='Set environment variables')
+    parser.add_argument('-l',
+                        '--label',
+                        action='append',
+                        dest='labels',
+                        help='Set meta data on a container')
+    parser.add_argument('-m',
+                        '--memory',
+                        dest='memory',
+                        help='Memory limit')
+    parser.add_argument('--name',
+                        dest='name',
+                        help='Assign a name to the container',
+                        required=True)
+    parser.add_argument('--restart',
+                        dest='restart_policy',
+                        help='Restart policy to apply when a container exits (default "no")')
+    parser.add_argument('-u',
+                        '--user',
+                        dest='user',
+                        help='Username or UID (format: <name|uid>[:<group|gid>])')
+    parser.add_argument('-v',
+                        '--volume',
+                        action='append',
+                        dest='volumes',
+                        help='Bind mount a volume')
+    parser.add_argument('--volume-driver',
+                        dest='volume_driver',
+                        help='Optional volume driver for the container')
+    parser.add_argument('image',
+                        nargs=1,
+                        help='Image to run')
+
+    parser.add_argument('--nomad-count',
+                        default=1,
+                        dest='nomad_count',
+                        help='Set the count')
+    parser.add_argument('--nomad-group-name',
+                        dest='nomad_group_name',
+                        help='Set the task name',
+                        required=True)
+    parser.add_argument('--nomad-job-name',
+                        dest='nomad_job_name',
+                        help='Set the job name',
+                        required=True)
+
+    args = vars(parser.parse_args())
+    args['env'] = process_key_value_dict(args['env'])
+    args['labels'] = process_key_value_dict(args['labels'])
+    args['restart_policy'] = process_restart_policy(args['restart_policy'])
+    # todo: parse memory from various formats to megabytes
+    # todo: parse env-file and append to args.env:
+
+    if args['volumes'] is None:
+        args['volumes'] = []
+    args['volumes'] = filter(None, args['volumes'])
+    return args
+
+
+def to_nomad(args):
+    task = {
+        'Name': args['name'],
+        'Driver': 'docker',
+        'User': args['user'],
+        'Config': {
+            'image': args['image'],
+            'volumes': args['volumes'],
+            'volume-driver': args['volume_driver'],
+            'labels': args['labels'],
+        },
+        'Env': args['env'],
+        'Resources': {
+            'CPU': args['cpu_shares'],
+            'MemoryMB': args['memory'],
+        },
+    }
+
+    task_group = {
+        'Name': args['nomad_group_name'],
+        'Count': args['nomad_count'],
+        'Constraints': None,
+        'Meta': args['labels'],
+        'Tasks': [
+            task,
+        ],
+        'RestartPolicy': {
+            'Interval': 300000000000,
+            'Attempts': args['restart_policy']['attempts'],
+            'Delay': 25000000000,
+            'Mode': 'delay',
+        }
+    }
+
+    job = {}
+    job['Job'] = {
+        'Name': args['nomad_job_name'],
+        'ID': args['nomad_job_name'],
+        'TaskGroups': [
+            task_group,
+        ],
+    }
+    pprint.pprint(job)
+
+
+def main():
+    args = parse_args()
+    to_nomad(args)
+
+
+if __name__ == '__main__':
+    main()
